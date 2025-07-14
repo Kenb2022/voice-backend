@@ -1,6 +1,7 @@
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os'); // Thêm dòng này
 const speech = require('@google-cloud/speech');
 
 let client;
@@ -14,12 +15,18 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
     });
 }
 
-// Ghi file tạm vào /tmp (Vercel yêu cầu)
-const upload = multer({ dest: '/tmp' });
+// Ghi file tạm vào thư mục tạm của hệ điều hành
+const upload = multer({ dest: os.tmpdir() }); // Sửa lại dòng này
 
 // Hàm STT
 async function transcribeAudio(filePath) {
-    const audioBytes = fs.readFileSync(filePath).toString('base64');
+    let audioBytes;
+    try {
+        audioBytes = fs.readFileSync(filePath).toString('base64');
+    } catch (err) {
+        console.error('❌ Lỗi đọc file audio:', err);
+        throw err;
+    }
 
     const request = {
         audio: { content: audioBytes },
@@ -44,7 +51,7 @@ module.exports = (req, res) => {
         }
 
         const filePath = req.file.path;
-        console.log('✅ Đã nhận file:', req.file.originalname, 'at', filePath);
+        console.log('✅ Đã nhận file:', req.file.originalname, 'at', filePath, 'size:', req.file.size);
 
         try {
             const text = await transcribeAudio(filePath);
