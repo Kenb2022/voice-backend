@@ -1,23 +1,23 @@
+const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const multer = require('multer');
 const speech = require('@google-cloud/speech');
-const tts = require('@google-cloud/text-to-speech');
-const util = require('util');
 
+let client;
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    client = new speech.SpeechClient({
+        credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    });
+} else {
+    client = new speech.SpeechClient({
+        keyFilename: path.join(__dirname, '../Ggkey/google-stt-key.json')
+    });
+}
+
+// Ghi file tạm vào /tmp (Vercel yêu cầu)
 const upload = multer({ dest: '/tmp' });
 
-// Khởi tạo Speech-to-Text
-const speechClient = new speech.SpeechClient({
-    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || fs.readFileSync(path.join(__dirname, '../Ggkey/google-stt-key.json')))
-});
-
-// Khởi tạo Text-to-Speech
-const ttsClient = new tts.TextToSpeechClient({
-    credentials: JSON.parse(process.env.GOOGLE_TTS_CREDENTIALS_JSON || fs.readFileSync(path.join(__dirname, '../Ggkey/google-tts-key.json')))
-});
-
-// Hàm chuyển âm thanh thành văn bản
+// Hàm STT
 async function transcribeAudio(filePath) {
     const audioBytes = fs.readFileSync(filePath).toString('base64');
 
@@ -30,50 +30,39 @@ async function transcribeAudio(filePath) {
         },
     };
 
-    const [response] = await speechClient.recognize(request);
+    const [response] = await client.recognize(request);
     const transcription = response.results.map(r => r.alternatives[0].transcript).join('\n');
     return transcription;
 }
 
-// Hàm chuyển văn bản thành âm thanh
-async function synthesizeSpeech(text, filePath) {
-    const request = {
-        input: { text },
-        voice: { languageCode: 'vi-VN', ssmlGender: 'NEUTRAL' },
-        audioConfig: { audioEncoding: 'MP3' },
-    };
-
-    const [response] = await ttsClient.synthesizeSpeech(request);
-    fs.writeFileSync(filePath, response.audioContent, 'binary');
-    console.log('✅ Đã tạo file TTS:', filePath);
-}
-
-// Handler API chính
+// Serverless handler cho Vercel
 module.exports = (req, res) => {
     upload.single('audio')(req, res, async (err) => {
         if (err || !req.file) {
-            return res.status(400).json({ error: 'Thiếu file ghi âm' });
+            console.error('❌ Lỗi upload file:', err);
+            return res.status(400).json({ error: 'Upload thất bại hoặc thiếu file ghi âm' });
         }
 
-        const audioPath = req.file.path;
-        const replyPath = '/tmp/reply.mp3';
+        const filePath = req.file.path;
+        console.log('✅ Đã nhận file:', req.file.originalname, 'at', filePath);
 
         try {
-            const text = await transcribeAudio(audioPath);
-            console.log('📝 Văn bản:', text);
+            const text = await transcribeAudio(filePath);
 
-            // Ở đây bạn có thể gửi đến AI chatbot hoặc trả về nội dung đơn giản
-            const botReply = `Bạn vừa nói: ${text}`; // Ví dụ
+            // Xóa file tạm
+            fs.unlink(filePath, (err) => {
+                if (err) console.warn('❗Không thể xóa file tạm:', err);
+            });
 
-            await synthesizeSpeech(botReply, replyPath);
-
-            const host = req.headers.host;
-            const voiceUrl = `https://${host}/api/reply`;
-
-            return res.status(200).json({ text, voiceUrl });
+            console.log('📄 Văn bản nhận dạng:', text);
+            return res.status(200).json({
+                text,
+                filename: req.file.originalname,
+                size: req.file.size,
+            });
         } catch (error) {
-            console.error('❌ Lỗi xử lý:', error);
-            return res.status(500).json({ error: 'Lỗi nội bộ server' });
-        } finally {
-            fs.unlink(audioPath, () => { });
+            console.error('❌ STT error:', error);
+            return res.status(500).json({ error: 'Không thể nhận dạng giọng nói' });
         }
+    });
+};
