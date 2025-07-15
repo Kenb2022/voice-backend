@@ -95,3 +95,14 @@ module.exports = (req, res) => {
         }
     });
 };
+
+// Thêm đoạn này ở cuối file
+module.exports.getAudio = (req, res) => {
+    const { filename } = req.query;
+    if (!filename) return res.status(400).json({ error: 'Thiếu tên file' });
+    const filePath = path.join(os.tmpdir(), filename);
+    fs.access(filePath, fs.constants.F_OK, (err) => {
+        if (err) return res.status(404).json({ error: 'Không tìm thấy file ghi âm' });
+        res.sendFile(filePath);
+    });
+};
