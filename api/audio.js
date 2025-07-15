@@ -20,12 +20,18 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
 const upload = multer({ dest: os.tmpdir() }); // Sửa lại dòng này
 
 // Hàm kiểm tra năng lượng trung bình của file WAV
-async function isAudioLoudEnough(filePath, threshold = 0.01) {
-    const buffer = fs.readFileSync(filePath);
-    const audioData = await wav.decode(buffer);
-    const channelData = audioData.channelData[0]; // Lấy kênh đầu tiên
-    const energy = channelData.reduce((sum, sample) => sum + Math.abs(sample), 0) / channelData.length;
-    return energy > threshold;
+async function isAudioLoudEnough(filePath, threshold = 0.005) { // Giảm threshold
+    try {
+        const buffer = fs.readFileSync(filePath);
+        const audioData = await wav.decode(buffer);
+        const channelData = audioData.channelData[0];
+        const energy = channelData.reduce((sum, sample) => sum + Math.abs(sample), 0) / channelData.length;
+        console.log('🔎 Energy:', energy); // Log năng lượng để debug
+        return energy > threshold;
+    } catch (err) {
+        console.error('❌ Lỗi kiểm tra năng lượng file:', err); // Log lỗi chi tiết
+        throw err;
+    }
 }
 
 // Hàm STT
