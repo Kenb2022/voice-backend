@@ -23,6 +23,8 @@ const upload = multer({ dest: os.tmpdir() }); // Sửa lại dòng này
 async function isAudioLoudEnough(filePath, threshold = 0.005) { // Giảm threshold
     try {
         const buffer = fs.readFileSync(filePath);
+        // Log header file để kiểm tra định dạng
+        console.log('🔎 File header:', buffer.slice(0, 32).toString('hex'));
         const audioData = await wav.decode(buffer);
         const channelData = audioData.channelData[0];
         const energy = channelData.reduce((sum, sample) => sum + Math.abs(sample), 0) / channelData.length;
