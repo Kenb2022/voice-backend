@@ -1,9 +1,10 @@
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const os = require('os'); // Thêm dòng này
+const os = require('os');
 const speech = require('@google-cloud/speech');
-const wav = require('wav-decoder'); // Thêm dòng này
+const wav = require('wav-decoder');
+const ffmpeg = require('fluent-ffmpeg'); // Thêm dòng này
 
 let client;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
@@ -68,39 +69,48 @@ module.exports = (req, res) => {
             return res.status(400).json({ error: 'Upload thất bại hoặc thiếu file ghi âm' });
         }
 
-        const filePath = req.file.path;
-        console.log('✅ Đã nhận file:', req.file.originalname, 'at', filePath, 'size:', req.file.size);
+        const inputPath = req.file.path;
+        const wavPath = path.join(os.tmpdir(), `${req.file.filename}-converted.wav`);
+        // Chuyển đổi sang WAV PCM
+        ffmpeg(inputPath)
+            .output(wavPath)
+            .audioCodec('pcm_s16le')
+            .audioChannels(1)
+            .audioFrequency(44100)
+            .on('end', async () => {
+                fs.unlink(inputPath, () => { });
+                try {
+                    const loudEnough = await isAudioLoudEnough(wavPath);
+                    if (!loudEnough) {
+                        fs.unlink(wavPath, () => { });
+                        return res.status(400).json({ error: 'File ghi âm không rõ tiếng hoặc quá nhỏ' });
+                    }
+                } catch (checkErr) {
+                    fs.unlink(wavPath, () => { });
+                    return res.status(400).json({ error: 'Không thể kiểm tra file ghi âm' });
+                }
 
-        // Kiểm tra năng lượng file audio
-        try {
-            const loudEnough = await isAudioLoudEnough(filePath);
-            if (!loudEnough) {
-                fs.unlink(filePath, () => { });
-                return res.status(400).json({ error: 'File ghi âm không rõ tiếng hoặc quá nhỏ' });
-            }
-        } catch (checkErr) {
-            fs.unlink(filePath, () => { });
-            return res.status(400).json({ error: 'Không thể kiểm tra file ghi âm' });
-        }
-
-        try {
-            const text = await transcribeAudio(filePath);
-
-            // Xóa file tạm
-            fs.unlink(filePath, (err) => {
-                if (err) console.warn('❗Không thể xóa file tạm:', err);
-            });
-
-            console.log('📄 Văn bản nhận dạng:', text);
-            return res.status(200).json({
-                text,
-                filename: req.file.originalname,
-                size: req.file.size,
-            });
-        } catch (error) {
-            console.error('❌ STT error:', error);
-            return res.status(500).json({ error: 'Không thể nhận dạng giọng nói' });
-        }
+                try {
+                    const text = await transcribeAudio(wavPath);
+                    fs.unlink(wavPath, () => { });
+                    console.log('📄 Văn bản nhận dạng:', text);
+                    return res.status(200).json({
+                        text,
+                        filename: req.file.originalname,
+                        size: req.file.size,
+                    });
+                } catch (error) {
+                    fs.unlink(wavPath, () => { });
+                    console.error('❌ STT error:', error);
+                    return res.status(500).json({ error: 'Không thể nhận dạng giọng nói' });
+                }
+            })
+            .on('error', (ffErr) => {
+                fs.unlink(inputPath, () => { });
+                fs.unlink(wavPath, () => { });
+                res.status(500).json({ error: 'Lỗi chuyển đổi audio', detail: ffErr.message });
+            })
+            .run();
     });
 };
 
@@ -112,5 +122,34 @@ module.exports.getAudio = (req, res) => {
     fs.access(filePath, fs.constants.F_OK, (err) => {
         if (err) return res.status(404).json({ error: 'Không tìm thấy file ghi âm' });
         res.sendFile(filePath);
+    });
+};
+
+// API chuyển đổi audio sang WAV PCM 16-bit mono
+module.exports.convert = (req, res) => {
+    const uploadConvert = multer({ dest: os.tmpdir() }).single('audio');
+    uploadConvert(req, res, (err) => {
+        if (err || !req.file) {
+            return res.status(400).json({ error: 'Upload thất bại hoặc thiếu file audio' });
+        }
+        const inputPath = req.file.path;
+        const outputPath = path.join(os.tmpdir(), `${req.file.filename}-converted.wav`);
+        ffmpeg(inputPath)
+            .output(outputPath)
+            .audioCodec('pcm_s16le')
+            .audioChannels(1)
+            .audioFrequency(44100)
+            .on('end', () => {
+                res.sendFile(outputPath, err => {
+                    fs.unlink(inputPath, () => { });
+                    fs.unlink(outputPath, () => { });
+                });
+            })
+            .on('error', (ffErr) => {
+                fs.unlink(inputPath, () => { });
+                fs.unlink(outputPath, () => { });
+                res.status(500).json({ error: 'Lỗi chuyển đổi audio', detail: ffErr.message });
+            })
+            .run();
     });
 };
