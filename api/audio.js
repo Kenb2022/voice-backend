@@ -71,7 +71,6 @@ module.exports = (req, res) => {
 
         const inputPath = req.file.path;
         const wavPath = path.join(os.tmpdir(), `${req.file.filename}-converted.wav`);
-        // Chuyển đổi sang WAV PCM
         ffmpeg(inputPath)
             .output(wavPath)
             .audioCodec('pcm_s16le')
@@ -82,10 +81,12 @@ module.exports = (req, res) => {
                 try {
                     const loudEnough = await isAudioLoudEnough(wavPath);
                     if (!loudEnough) {
+                        console.error('❌ File quá nhỏ hoặc không rõ tiếng');
                         fs.unlink(wavPath, () => { });
                         return res.status(400).json({ error: 'File ghi âm không rõ tiếng hoặc quá nhỏ' });
                     }
                 } catch (checkErr) {
+                    console.error('❌ Lỗi kiểm tra năng lượng file:', checkErr);
                     fs.unlink(wavPath, () => { });
                     return res.status(400).json({ error: 'Không thể kiểm tra file ghi âm' });
                 }
@@ -100,12 +101,13 @@ module.exports = (req, res) => {
                         size: req.file.size,
                     });
                 } catch (error) {
+                    console.error('❌ Lỗi nhận dạng giọng nói:', error);
                     fs.unlink(wavPath, () => { });
-                    console.error('❌ STT error:', error);
                     return res.status(500).json({ error: 'Không thể nhận dạng giọng nói' });
                 }
             })
             .on('error', (ffErr) => {
+                console.error('❌ Lỗi chuyển đổi audio bằng ffmpeg:', ffErr);
                 fs.unlink(inputPath, () => { });
                 fs.unlink(wavPath, () => { });
                 res.status(500).json({ error: 'Lỗi chuyển đổi audio', detail: ffErr.message });
