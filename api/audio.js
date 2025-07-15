@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os'); // Thêm dòng này
 const speech = require('@google-cloud/speech');
+const wav = require('wav-decoder'); // Thêm dòng này
 
 let client;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
@@ -17,6 +18,15 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
 
 // Ghi file tạm vào thư mục tạm của hệ điều hành
 const upload = multer({ dest: os.tmpdir() }); // Sửa lại dòng này
+
+// Hàm kiểm tra năng lượng trung bình của file WAV
+async function isAudioLoudEnough(filePath, threshold = 0.01) {
+    const buffer = fs.readFileSync(filePath);
+    const audioData = await wav.decode(buffer);
+    const channelData = audioData.channelData[0]; // Lấy kênh đầu tiên
+    const energy = channelData.reduce((sum, sample) => sum + Math.abs(sample), 0) / channelData.length;
+    return energy > threshold;
+}
 
 // Hàm STT
 async function transcribeAudio(filePath) {
@@ -52,6 +62,18 @@ module.exports = (req, res) => {
 
         const filePath = req.file.path;
         console.log('✅ Đã nhận file:', req.file.originalname, 'at', filePath, 'size:', req.file.size);
+
+        // Kiểm tra năng lượng file audio
+        try {
+            const loudEnough = await isAudioLoudEnough(filePath);
+            if (!loudEnough) {
+                fs.unlink(filePath, () => { });
+                return res.status(400).json({ error: 'File ghi âm không rõ tiếng hoặc quá nhỏ' });
+            }
+        } catch (checkErr) {
+            fs.unlink(filePath, () => { });
+            return res.status(400).json({ error: 'Không thể kiểm tra file ghi âm' });
+        }
 
         try {
             const text = await transcribeAudio(filePath);
